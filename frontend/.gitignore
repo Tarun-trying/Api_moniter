@@ -1,0 +1,42 @@
+# ────────────────────────────────────────────────────────────
+# Frontend — .gitignore  (see root .gitignore for full rules)
+# ────────────────────────────────────────────────────────────
+
+# Dependencies
+node_modules/
+
+# Production build
+dist/
+dist-ssr/
+
+# Local env files
+*.local
+.env
+.env.*
+!.env.example
+
+# Build / type caches
+.vite/
+.cache/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

@@ -1,0 +1,56 @@
+# ────────────────────────────────────────────────────────────
+# Backend (Python/FastAPI) — .gitignore
+# ────────────────────────────────────────────────────────────
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+env/
+ENV/
+
+# dotenv / secrets — NEVER commit real credentials
+.env
+.env.*
+!.env.example
+
+# SQLite database (local dev only)
+*.db
+*.sqlite3
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+coverage.xml
+*.cover
+
+# Logs
+*.log
+logs/
+
+# MyPy / type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
