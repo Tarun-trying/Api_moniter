@@ -1,5 +1,5 @@
 """
-PulseMonitor — FastAPI application entry point.
+PulseMonitor — FastAPI application entry point (in-memory store version).
 """
 import logging
 from contextlib import asynccontextmanager
@@ -7,9 +7,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from database import engine
-import models  # ensure all ORM models are imported so Base.metadata knows about them
-from database import Base
 from scheduler import start_scheduler, stop_scheduler
 from api.monitors import router as monitors_router
 from api.checks import router as checks_router
@@ -32,9 +29,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create tables
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables ensured")
+    logger.info("PulseMonitor starting — using in-memory store (data is not persisted)")
 
     # Start background scheduler
     start_scheduler()
@@ -51,7 +46,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="PulseMonitor API",
     description="API monitoring and uptime tracking service",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 

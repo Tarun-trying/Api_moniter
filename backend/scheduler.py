@@ -1,5 +1,5 @@
 """
-Pure-asyncio background monitoring scheduler.
+Pure-asyncio background monitoring scheduler (in-memory store version).
 
 No APScheduler, no Redis, no Celery.
 Uses asyncio tasks with per-monitor sleep loops.
@@ -11,11 +11,9 @@ Design:
 """
 import asyncio
 import logging
-from datetime import datetime
 from typing import Dict, Optional
 
-from database import SessionLocal
-from models.monitor import Monitor
+import store
 from services.monitor_service import execute_check
 
 logger = logging.getLogger(__name__)
@@ -57,31 +55,25 @@ async def _monitor_worker(monitor_id: int, interval: int) -> None:
 
 def _sync_jobs() -> None:
     """
-    Synchronise running tasks with current DB state.
+    Synchronise running tasks with current in-memory store state.
     Called at startup and every 60 s.
     """
-    db = SessionLocal()
-    try:
-        monitors = db.query(Monitor).filter(Monitor.is_active == True).all()
-        active_ids = {m.id: m for m in monitors}
+    active_monitors = {m["id"]: m for m in store.list_monitors_sorted() if m["is_active"]}
 
-        # Cancel tasks for deleted/deactivated monitors
-        for mid, task in list(_tasks.items()):
-            if mid not in active_ids:
-                task.cancel()
-                del _tasks[mid]
-                logger.info("Stopped worker for monitor %d", mid)
+    # Cancel tasks for deleted/deactivated monitors
+    for mid, task in list(_tasks.items()):
+        if mid not in active_monitors:
+            task.cancel()
+            del _tasks[mid]
+            logger.info("Stopped worker for monitor %d", mid)
 
-        # Start tasks for new monitors
-        for mid, monitor in active_ids.items():
-            if mid not in _tasks or _tasks[mid].done():
-                task = asyncio.ensure_future(
-                    _monitor_worker(mid, monitor.interval)
-                )
-                _tasks[mid] = task
-
-    finally:
-        db.close()
+    # Start tasks for new monitors
+    for mid, monitor in active_monitors.items():
+        if mid not in _tasks or _tasks[mid].done():
+            task = asyncio.ensure_future(
+                _monitor_worker(mid, monitor["interval"])
+            )
+            _tasks[mid] = task
 
 
 async def _supervisor() -> None:

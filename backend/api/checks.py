@@ -1,14 +1,12 @@
 """
-Check history endpoints.
+Check history endpoints (in-memory store version).
 """
-from typing import List, Optional
+from datetime import datetime, timedelta
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, Query
 
-from database import get_db
-from models.check import Check
-from models.monitor import Monitor
+import store
 from schemas.check import CheckResponse
 from services.monitor_service import compute_uptime, compute_uptime_segments
 
@@ -16,77 +14,56 @@ router = APIRouter(prefix="/api/monitors", tags=["checks"])
 
 
 @router.get("/{monitor_id}/checks", response_model=List[CheckResponse])
-def list_checks(
+async def list_checks(
     monitor_id: int,
     limit: int = Query(default=50, ge=1, le=500),
-    db: Session = Depends(get_db),
 ):
-    monitor = db.query(Monitor).filter(Monitor.id == monitor_id).first()
-    if not monitor:
+    if not store.get_monitor(monitor_id):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
-    checks = (
-        db.query(Check)
-        .filter(Check.monitor_id == monitor_id)
-        .order_by(Check.checked_at.desc())
-        .limit(limit)
-        .all()
-    )
-    return checks
+    return store.get_checks_for(monitor_id, limit=limit)
 
 
 @router.get("/{monitor_id}/uptime")
-def get_uptime(monitor_id: int, db: Session = Depends(get_db)):
-    monitor = db.query(Monitor).filter(Monitor.id == monitor_id).first()
-    if not monitor:
+async def get_uptime(monitor_id: int):
+    if not store.get_monitor(monitor_id):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
     return {
-        "uptime_24h": compute_uptime(db, monitor_id, hours=24),
-        "uptime_7d": compute_uptime(db, monitor_id, hours=168),
-        "uptime_30d": compute_uptime(db, monitor_id, hours=720),
+        "uptime_24h": compute_uptime(monitor_id, hours=24),
+        "uptime_7d": compute_uptime(monitor_id, hours=168),
+        "uptime_30d": compute_uptime(monitor_id, hours=720),
     }
 
 
 @router.get("/{monitor_id}/uptime/segments")
-def get_uptime_segments(
+async def get_uptime_segments(
     monitor_id: int,
     hours: int = Query(default=24, ge=1, le=720),
-    db: Session = Depends(get_db),
 ):
-    monitor = db.query(Monitor).filter(Monitor.id == monitor_id).first()
-    if not monitor:
+    if not store.get_monitor(monitor_id):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
-    return compute_uptime_segments(db, monitor_id, hours=hours)
+    return compute_uptime_segments(monitor_id, hours=hours)
 
 
 @router.get("/{monitor_id}/chart")
-def get_chart_data(
+async def get_chart_data(
     monitor_id: int,
     hours: int = Query(default=24, ge=1, le=720),
-    db: Session = Depends(get_db),
 ):
     """Returns response-time data points for charting."""
-    from datetime import datetime, timedelta
-
-    monitor = db.query(Monitor).filter(Monitor.id == monitor_id).first()
-    if not monitor:
+    if not store.get_monitor(monitor_id):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
     since = datetime.utcnow() - timedelta(hours=hours)
-    rows = (
-        db.query(Check)
-        .filter(Check.monitor_id == monitor_id, Check.checked_at >= since)
-        .order_by(Check.checked_at.asc())
-        .all()
-    )
+    rows = store.get_checks_since(monitor_id, since)
     return [
         {
-            "time": r.checked_at.isoformat(),
-            "responseTime": r.response_time,
-            "success": r.success,
-            "statusCode": r.status_code,
+            "time": c["checked_at"].isoformat(),
+            "responseTime": c["response_time"],
+            "success": c["success"],
+            "statusCode": c["status_code"],
         }
-        for r in rows
+        for c in rows
     ]
