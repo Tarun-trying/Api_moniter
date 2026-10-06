@@ -1,5 +1,5 @@
 """
-Check history endpoints (in-memory store version).
+Check history endpoints (MongoDB version).
 """
 from datetime import datetime, timedelta
 from typing import List
@@ -18,21 +18,21 @@ async def list_checks(
     monitor_id: int,
     limit: int = Query(default=50, ge=1, le=500),
 ):
-    if not store.get_monitor(monitor_id):
+    if not await store.get_monitor(monitor_id):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
-    return store.get_checks_for(monitor_id, limit=limit)
+    return await store.get_checks_for(monitor_id, limit=limit)
 
 
 @router.get("/{monitor_id}/uptime")
 async def get_uptime(monitor_id: int):
-    if not store.get_monitor(monitor_id):
+    if not await store.get_monitor(monitor_id):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
     return {
-        "uptime_24h": compute_uptime(monitor_id, hours=24),
-        "uptime_7d": compute_uptime(monitor_id, hours=168),
-        "uptime_30d": compute_uptime(monitor_id, hours=720),
+        "uptime_24h": await compute_uptime(monitor_id, hours=24),
+        "uptime_7d": await compute_uptime(monitor_id, hours=168),
+        "uptime_30d": await compute_uptime(monitor_id, hours=720),
     }
 
 
@@ -41,10 +41,10 @@ async def get_uptime_segments(
     monitor_id: int,
     hours: int = Query(default=24, ge=1, le=720),
 ):
-    if not store.get_monitor(monitor_id):
+    if not await store.get_monitor(monitor_id):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
-    return compute_uptime_segments(monitor_id, hours=hours)
+    return await compute_uptime_segments(monitor_id, hours=hours)
 
 
 @router.get("/{monitor_id}/chart")
@@ -53,11 +53,11 @@ async def get_chart_data(
     hours: int = Query(default=24, ge=1, le=720),
 ):
     """Returns response-time data points for charting."""
-    if not store.get_monitor(monitor_id):
+    if not await store.get_monitor(monitor_id):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
     since = datetime.utcnow() - timedelta(hours=hours)
-    rows = store.get_checks_since(monitor_id, since)
+    rows = await store.get_checks_since(monitor_id, since)
     return [
         {
             "time": c["checked_at"].isoformat(),

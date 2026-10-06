@@ -1,5 +1,5 @@
 """
-High-level monitor operations (in-memory store version).
+High-level monitor operations (MongoDB version).
 
 - execute_check(monitor_id): run a check, persist results to store, evaluate incidents
 - compute_uptime(monitor_id, hours): percentage uptime over last N hours
@@ -31,7 +31,7 @@ async def execute_check(monitor_id: int) -> Optional[dict]:
     Run a single check for the given monitor id.
     Returns the result dict or None if monitor not found / inactive.
     """
-    monitor = store.get_monitor(monitor_id)
+    monitor = await store.get_monitor(monitor_id)
     if not monitor or not monitor["is_active"]:
         return None
 
@@ -47,7 +47,7 @@ async def execute_check(monitor_id: int) -> Optional[dict]:
         now = datetime.utcnow()
 
         # Persist check record
-        check = store.add_check(
+        check = await store.add_check(
             monitor_id=monitor_id,
             status_code=result["status_code"],
             response_time=result["response_time"],
@@ -58,7 +58,7 @@ async def execute_check(monitor_id: int) -> Optional[dict]:
         )
 
         # Update monitor cached status
-        store.update_monitor_cache(
+        await store.update_monitor_cache(
             monitor_id,
             last_status=_determine_status(result["success"], result["content_check_passed"]),
             last_response_time=result["response_time"],
@@ -68,7 +68,7 @@ async def execute_check(monitor_id: int) -> Optional[dict]:
         )
 
         # Evaluate incident
-        evaluate_incident(monitor_id, check)
+        await evaluate_incident(monitor_id, check)
 
         return result
 
@@ -77,23 +77,23 @@ async def execute_check(monitor_id: int) -> Optional[dict]:
         return None
 
 
-def compute_uptime(monitor_id: int, hours: int = 24) -> Optional[float]:
+async def compute_uptime(monitor_id: int, hours: int = 24) -> Optional[float]:
     """Return uptime % over the last `hours` hours, or None if no checks exist."""
     since = datetime.utcnow() - timedelta(hours=hours)
-    rows = store.get_checks_since(monitor_id, since)
+    rows = await store.get_checks_since(monitor_id, since)
     if not rows:
         return None
     successes = sum(1 for c in rows if c["success"])
     return round(successes / len(rows) * 100, 4)
 
 
-def compute_uptime_segments(monitor_id: int, hours: int = 24) -> list[dict]:
+async def compute_uptime_segments(monitor_id: int, hours: int = 24) -> list[dict]:
     """
     Return list of check results as segments for the uptime bar visualization.
     Each item: {checked_at, success, status_code, response_time}
     """
     since = datetime.utcnow() - timedelta(hours=hours)
-    rows = store.get_checks_since(monitor_id, since)
+    rows = await store.get_checks_since(monitor_id, since)
     return [
         {
             "checked_at": c["checked_at"].isoformat(),

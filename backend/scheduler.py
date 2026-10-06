@@ -1,5 +1,5 @@
 """
-Pure-asyncio background monitoring scheduler (in-memory store version).
+Pure-asyncio background monitoring scheduler (MongoDB version).
 
 No APScheduler, no Redis, no Celery.
 Uses asyncio tasks with per-monitor sleep loops.
@@ -53,12 +53,16 @@ async def _monitor_worker(monitor_id: int, interval: int) -> None:
 # Sync / supervisor
 # ---------------------------------------------------------------------------
 
-def _sync_jobs() -> None:
+async def _sync_jobs() -> None:
     """
-    Synchronise running tasks with current in-memory store state.
+    Synchronise running tasks with current DB state.
     Called at startup and every 60 s.
     """
-    active_monitors = {m["id"]: m for m in store.list_monitors_sorted() if m["is_active"]}
+    active_monitors = {
+        m["id"]: m
+        for m in await store.list_monitors_sorted()
+        if m["is_active"]
+    }
 
     # Cancel tasks for deleted/deactivated monitors
     for mid, task in list(_tasks.items()):
@@ -81,7 +85,7 @@ async def _supervisor() -> None:
     while True:
         try:
             await asyncio.sleep(60)
-            _sync_jobs()
+            await _sync_jobs()
         except asyncio.CancelledError:
             break
         except Exception as exc:
@@ -98,9 +102,10 @@ def start_scheduler() -> None:
     Must be called from within a running asyncio event loop (FastAPI lifespan).
     """
     global _supervisor_task
-    _sync_jobs()
+    # _sync_jobs is now async — schedule it as a task at startup
+    asyncio.ensure_future(_sync_jobs())
     _supervisor_task = asyncio.ensure_future(_supervisor())
-    logger.info("Scheduler started with %d monitor(s)", len(_tasks))
+    logger.info("Scheduler started")
 
 
 def stop_scheduler() -> None:

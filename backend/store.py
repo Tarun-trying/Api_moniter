@@ -1,52 +1,51 @@
 """
-In-memory data store for PulseMonitor.
+MongoDB-backed data store for PulseMonitor.
 
-All state lives in Python dicts — no database, no files.
-Data is lost on server restart (by design).
+Replaces the old in-memory dicts with async calls to MongoDB Atlas via motor.
+All public functions keep the same signatures as the original in-memory store
+so that the rest of the codebase (api/, services/, scheduler.py) is unchanged.
 
-Entities
---------
-monitors  : dict[int, dict]   – monitor config + cached last-status fields
-checks    : dict[int, dict]   – individual check results, keyed by check id
-incidents : dict[int, dict]   – incidents, keyed by incident id
-
-All write operations should be done inside `_lock` to stay thread-safe
-(the asyncio event loop is single-threaded, but the scheduler can be
-called from sync threads in some FastAPI configurations).
+Collections
+-----------
+monitors  — one doc per monitor (config + cached last-status fields)
+checks    — individual check result records
+incidents — incident records
 """
-import threading
+import logging
 from datetime import datetime
 from typing import Optional
 
-# ---------------------------------------------------------------------------
-# Internal state
-# ---------------------------------------------------------------------------
+from database import get_db
 
-_lock = threading.Lock()
-
-_next_ids: dict[str, int] = {"monitors": 1, "checks": 1, "incidents": 1}
-
-monitors:  dict[int, dict] = {}
-checks:    dict[int, dict] = {}
-incidents: dict[int, dict] = {}
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# ID helpers
+# Internal helpers
 # ---------------------------------------------------------------------------
 
-def _next_id(kind: str) -> int:
-    with _lock:
-        id_ = _next_ids[kind]
-        _next_ids[kind] += 1
-        return id_
+def _to_int_id(oid) -> int:
+    """
+    We expose integer IDs to the rest of the app; MongoDB uses ObjectIds internally.
+    We store a numeric `id` field alongside `_id` for compatibility.
+    """
+    return oid
+
+
+def _serialize(doc: dict) -> dict:
+    """Strip `_id` and return a plain dict the rest of the app can consume."""
+    if doc is None:
+        return None
+    d = dict(doc)
+    d.pop("_id", None)
+    return d
 
 
 # ---------------------------------------------------------------------------
 # Monitor helpers
 # ---------------------------------------------------------------------------
 
-def make_monitor(
+async def make_monitor(
     name: str,
     url: str,
     method: str = "GET",
@@ -55,8 +54,18 @@ def make_monitor(
     expected_status: Optional[int] = 200,
     expected_content: Optional[str] = None,
 ) -> dict:
-    mid = _next_id("monitors")
+    db = get_db()
     now = datetime.utcnow()
+
+    # Use an auto-increment counter stored in a `counters` collection
+    counter_doc = await db.counters.find_one_and_update(
+        {"_id": "monitors"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True,
+    )
+    mid = counter_doc["seq"]
+
     m = {
         "id": mid,
         "name": name,
@@ -76,39 +85,38 @@ def make_monitor(
         "last_status_code": None,
         "last_error": None,
     }
-    with _lock:
-        monitors[mid] = m
+    await db.monitors.insert_one({**m})
     return m
 
 
-def get_monitor(monitor_id: int) -> Optional[dict]:
-    return monitors.get(monitor_id)
+async def get_monitor(monitor_id: int) -> Optional[dict]:
+    db = get_db()
+    doc = await db.monitors.find_one({"id": monitor_id})
+    return _serialize(doc)
 
 
-def update_monitor_cache(monitor_id: int, **kwargs) -> None:
-    """Update specific fields on the monitor dict (e.g. after a check)."""
-    with _lock:
-        m = monitors.get(monitor_id)
-        if m:
-            m.update(kwargs)
-            m["updated_at"] = datetime.utcnow()
+async def update_monitor_cache(monitor_id: int, **kwargs) -> None:
+    """Update specific fields on the monitor document (e.g. after a check)."""
+    db = get_db()
+    kwargs["updated_at"] = datetime.utcnow()
+    await db.monitors.update_one({"id": monitor_id}, {"$set": kwargs})
 
 
-def list_monitors_sorted() -> list[dict]:
+async def list_monitors_sorted() -> list[dict]:
     """Return all monitors ordered by created_at descending."""
-    return sorted(monitors.values(), key=lambda m: m["created_at"], reverse=True)
+    db = get_db()
+    cursor = db.monitors.find({}).sort("created_at", -1)
+    return [_serialize(doc) async for doc in cursor]
 
 
-def delete_monitor(monitor_id: int) -> bool:
-    with _lock:
-        if monitor_id not in monitors:
-            return False
-        del monitors[monitor_id]
-        # Cascade: remove related checks and incidents
-        for cid in [cid for cid, c in checks.items() if c["monitor_id"] == monitor_id]:
-            del checks[cid]
-        for iid in [iid for iid, i in incidents.items() if i["monitor_id"] == monitor_id]:
-            del incidents[iid]
+async def delete_monitor(monitor_id: int) -> bool:
+    db = get_db()
+    result = await db.monitors.delete_one({"id": monitor_id})
+    if result.deleted_count == 0:
+        return False
+    # Cascade: remove related checks and incidents
+    await db.checks.delete_many({"monitor_id": monitor_id})
+    await db.incidents.delete_many({"monitor_id": monitor_id})
     return True
 
 
@@ -116,7 +124,7 @@ def delete_monitor(monitor_id: int) -> bool:
 # Check helpers
 # ---------------------------------------------------------------------------
 
-def add_check(
+async def add_check(
     monitor_id: int,
     status_code: Optional[int],
     response_time: Optional[float],
@@ -125,7 +133,16 @@ def add_check(
     content_check_passed: Optional[bool],
     checked_at: datetime,
 ) -> dict:
-    cid = _next_id("checks")
+    db = get_db()
+
+    counter_doc = await db.counters.find_one_and_update(
+        {"_id": "checks"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True,
+    )
+    cid = counter_doc["seq"]
+
     c = {
         "id": cid,
         "monitor_id": monitor_id,
@@ -136,46 +153,64 @@ def add_check(
         "content_check_passed": content_check_passed,
         "checked_at": checked_at,
     }
-    with _lock:
-        checks[cid] = c
+    await db.checks.insert_one({**c})
     return c
 
 
-def get_checks_for(monitor_id: int, limit: int = 50) -> list[dict]:
+async def get_checks_for(monitor_id: int, limit: int = 50) -> list[dict]:
     """Return checks for a monitor, most recent first, up to `limit`."""
-    relevant = [c for c in checks.values() if c["monitor_id"] == monitor_id]
-    relevant.sort(key=lambda c: c["checked_at"], reverse=True)
-    return relevant[:limit]
+    db = get_db()
+    cursor = (
+        db.checks.find({"monitor_id": monitor_id})
+        .sort("checked_at", -1)
+        .limit(limit)
+    )
+    return [_serialize(doc) async for doc in cursor]
 
 
-def get_checks_since(monitor_id: int, since: datetime) -> list[dict]:
+async def get_checks_since(monitor_id: int, since: datetime) -> list[dict]:
     """Return all checks for a monitor after `since`, oldest first."""
-    relevant = [
-        c for c in checks.values()
-        if c["monitor_id"] == monitor_id and c["checked_at"] >= since
-    ]
-    relevant.sort(key=lambda c: c["checked_at"])
-    return relevant
+    db = get_db()
+    cursor = (
+        db.checks.find({"monitor_id": monitor_id, "checked_at": {"$gte": since}})
+        .sort("checked_at", 1)
+    )
+    return [_serialize(doc) async for doc in cursor]
 
 
-def get_all_checks_since(since: datetime) -> list[dict]:
+async def get_all_checks_since(since: datetime) -> list[dict]:
     """Return all checks across all monitors since `since`."""
-    return [c for c in checks.values() if c["checked_at"] >= since]
+    db = get_db()
+    cursor = db.checks.find({"checked_at": {"$gte": since}})
+    return [_serialize(doc) async for doc in cursor]
 
 
-def get_recent_results(monitor_id: int, n: int) -> list[bool]:
+async def get_recent_results(monitor_id: int, n: int) -> list[bool]:
     """Return the `success` values of the last n checks (most recent first)."""
-    relevant = [c for c in checks.values() if c["monitor_id"] == monitor_id]
-    relevant.sort(key=lambda c: c["checked_at"], reverse=True)
-    return [c["success"] for c in relevant[:n]]
+    db = get_db()
+    cursor = (
+        db.checks.find({"monitor_id": monitor_id}, {"success": 1})
+        .sort("checked_at", -1)
+        .limit(n)
+    )
+    return [doc["success"] async for doc in cursor]
 
 
 # ---------------------------------------------------------------------------
 # Incident helpers
 # ---------------------------------------------------------------------------
 
-def add_incident(monitor_id: int, reason: str) -> dict:
-    iid = _next_id("incidents")
+async def add_incident(monitor_id: int, reason: str) -> dict:
+    db = get_db()
+
+    counter_doc = await db.counters.find_one_and_update(
+        {"_id": "incidents"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True,
+    )
+    iid = counter_doc["seq"]
+
     i = {
         "id": iid,
         "monitor_id": monitor_id,
@@ -184,42 +219,51 @@ def add_incident(monitor_id: int, reason: str) -> dict:
         "reason": reason,
         "status": "ongoing",
     }
-    with _lock:
-        incidents[iid] = i
+    await db.incidents.insert_one({**i})
     return i
 
 
-def get_ongoing_incident(monitor_id: int) -> Optional[dict]:
-    ongoing = [
-        i for i in incidents.values()
-        if i["monitor_id"] == monitor_id and i["status"] == "ongoing"
-    ]
-    if not ongoing:
-        return None
-    return max(ongoing, key=lambda i: i["started_at"])
+async def get_ongoing_incident(monitor_id: int) -> Optional[dict]:
+    db = get_db()
+    cursor = (
+        db.incidents.find({"monitor_id": monitor_id, "status": "ongoing"})
+        .sort("started_at", -1)
+        .limit(1)
+    )
+    docs = [_serialize(doc) async for doc in cursor]
+    return docs[0] if docs else None
 
 
-def resolve_incident(incident_id: int) -> None:
-    with _lock:
-        i = incidents.get(incident_id)
-        if i:
-            i["status"] = "resolved"
-            i["resolved_at"] = datetime.utcnow()
+async def resolve_incident(incident_id: int) -> None:
+    db = get_db()
+    await db.incidents.update_one(
+        {"id": incident_id},
+        {"$set": {"status": "resolved", "resolved_at": datetime.utcnow()}},
+    )
 
 
-def list_incidents(status_filter: Optional[str] = None, limit: int = 50) -> list[dict]:
-    result = list(incidents.values())
+async def list_incidents(
+    status_filter: Optional[str] = None, limit: int = 50
+) -> list[dict]:
+    db = get_db()
+    query = {}
     if status_filter:
-        result = [i for i in result if i["status"] == status_filter]
-    result.sort(key=lambda i: i["started_at"], reverse=True)
-    return result[:limit]
+        query["status"] = status_filter
+    cursor = db.incidents.find(query).sort("started_at", -1).limit(limit)
+    return [_serialize(doc) async for doc in cursor]
 
 
-def get_incidents_for(monitor_id: int, limit: int = 20) -> list[dict]:
-    result = [i for i in incidents.values() if i["monitor_id"] == monitor_id]
-    result.sort(key=lambda i: i["started_at"], reverse=True)
-    return result[:limit]
+async def get_incidents_for(monitor_id: int, limit: int = 20) -> list[dict]:
+    db = get_db()
+    cursor = (
+        db.incidents.find({"monitor_id": monitor_id})
+        .sort("started_at", -1)
+        .limit(limit)
+    )
+    return [_serialize(doc) async for doc in cursor]
 
 
-def get_all_incidents_since(since: datetime) -> list[dict]:
-    return [i for i in incidents.values() if i["started_at"] >= since]
+async def get_all_incidents_since(since: datetime) -> list[dict]:
+    db = get_db()
+    cursor = db.incidents.find({"started_at": {"$gte": since}})
+    return [_serialize(doc) async for doc in cursor]

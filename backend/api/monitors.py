@@ -1,5 +1,5 @@
 """
-Monitor CRUD endpoints + manual trigger (in-memory store version).
+Monitor CRUD endpoints + manual trigger (MongoDB version).
 """
 import asyncio
 from typing import List, Optional
@@ -22,7 +22,7 @@ def _to_response(m: dict) -> dict:
 
 @router.get("", response_model=List[MonitorResponse])
 async def list_monitors():
-    return store.list_monitors_sorted()
+    return await store.list_monitors_sorted()
 
 
 @router.post("", response_model=MonitorResponse, status_code=status.HTTP_201_CREATED)
@@ -32,7 +32,7 @@ async def create_monitor(payload: MonitorCreate):
     if ssrf_error:
         raise HTTPException(status_code=400, detail=ssrf_error)
 
-    monitor = store.make_monitor(
+    monitor = await store.make_monitor(
         name=payload.name,
         url=payload.url,
         method=payload.method,
@@ -50,7 +50,7 @@ async def create_monitor(payload: MonitorCreate):
 
 @router.get("/{monitor_id}", response_model=MonitorResponse)
 async def get_monitor(monitor_id: int):
-    monitor = store.get_monitor(monitor_id)
+    monitor = await store.get_monitor(monitor_id)
     if not monitor:
         raise HTTPException(status_code=404, detail="Monitor not found")
     return monitor
@@ -58,7 +58,7 @@ async def get_monitor(monitor_id: int):
 
 @router.put("/{monitor_id}", response_model=MonitorResponse)
 async def update_monitor(monitor_id: int, payload: MonitorUpdate):
-    monitor = store.get_monitor(monitor_id)
+    monitor = await store.get_monitor(monitor_id)
     if not monitor:
         raise HTTPException(status_code=404, detail="Monitor not found")
 
@@ -89,8 +89,8 @@ async def update_monitor(monitor_id: int, payload: MonitorUpdate):
     if payload.interval is not None:
         updates["interval"] = payload.interval
 
-    store.update_monitor_cache(monitor_id, **updates)
-    monitor = store.get_monitor(monitor_id)
+    await store.update_monitor_cache(monitor_id, **updates)
+    monitor = await store.get_monitor(monitor_id)
 
     # Reschedule if interval changed
     if interval_changed:
@@ -106,17 +106,17 @@ async def update_monitor(monitor_id: int, payload: MonitorUpdate):
 
 @router.delete("/{monitor_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_monitor(monitor_id: int):
-    if not store.get_monitor(monitor_id):
+    if not await store.get_monitor(monitor_id):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
     sched.remove_monitor_job(monitor_id)
-    store.delete_monitor(monitor_id)
+    await store.delete_monitor(monitor_id)
 
 
 @router.post("/{monitor_id}/check")
 async def trigger_check(monitor_id: int):
     """Manually trigger an immediate check and wait for the result."""
-    if not store.get_monitor(monitor_id):
+    if not await store.get_monitor(monitor_id):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
     result = await execute_check(monitor_id)

@@ -1,5 +1,5 @@
 """
-Analytics aggregate endpoint (in-memory store version).
+Analytics aggregate endpoint (MongoDB version).
 """
 from datetime import datetime, timedelta
 
@@ -16,7 +16,7 @@ async def get_analytics(
 ):
     since = datetime.utcnow() - timedelta(hours=hours)
 
-    all_checks = store.get_all_checks_since(since)
+    all_checks = await store.get_all_checks_since(since)
 
     total_checks = len(all_checks)
     total_failures = sum(1 for c in all_checks if not c["success"])
@@ -41,12 +41,12 @@ async def get_analytics(
         p95_response_time = round(rt_values[p95_idx], 2)
 
     # Incidents
-    all_incidents = store.get_all_incidents_since(since)
+    all_incidents = await store.get_all_incidents_since(since)
     total_incidents = len(all_incidents)
 
     # Per-monitor uptime for bar chart
     monitor_uptime = []
-    for m in store.list_monitors_sorted():
+    for m in await store.list_monitors_sorted():
         if not m["is_active"]:
             continue
         mon_checks = [c for c in all_checks if c["monitor_id"] == m["id"]]
