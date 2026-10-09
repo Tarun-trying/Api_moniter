@@ -65,7 +65,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv(
         "ALLOWED_ORIGINS",
-        "http://localhost:5173,http://localhost:3000"
+        "http://localhost:5173,http://localhost:3000,https://api-moniter.vercel.app"
     ).split(","),
     allow_credentials=True,
     allow_methods=["*"],
