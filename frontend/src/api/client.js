@@ -3,10 +3,10 @@
  * All fetch calls go through here — no scattered fetch() across components.
  */
 
-// In production, VITE_API_URL points to the deployed backend (e.g. https://api.myapp.com).
+// In production, API_URL points to the deployed backend (e.g. https://api.myapp.com).
 // In development, Vite's proxy forwards /api → http://localhost:8000.
-const BASE = import.meta.env.VITE_API_URL
-  ? `${import.meta.env.VITE_API_URL}/api`
+const BASE = import.meta.env.API_URL
+  ? `${import.meta.env.API_URL}/api`
   : '/api';
 
 

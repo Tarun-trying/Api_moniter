@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
+  const apiUrl = process.env.API_URL || env.API_URL || 'http://localhost:8000'
 
   return {
     plugins: [
@@ -14,10 +15,13 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       proxy: {
         '/api': {
-          target: env.VITE_API_URL || 'http://localhost:8000',
+          target: apiUrl,
           changeOrigin: true,
         },
       },
+    },
+    define: {
+      'import.meta.env.API_URL': JSON.stringify(apiUrl),
     },
     build: {
       outDir: 'dist',
