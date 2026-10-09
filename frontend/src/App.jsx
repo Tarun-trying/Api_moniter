@@ -6,7 +6,6 @@ import Monitors from './pages/Monitors';
 import MonitorDetail from './pages/MonitorDetail';
 import Incidents from './pages/Incidents';
 import Analytics from './pages/Analytics';
-import Settings from './pages/Settings';
 
 export default function App() {
   return (
@@ -20,7 +19,6 @@ export default function App() {
             <Route path="/monitors/:id"      element={<MonitorDetail />} />
             <Route path="/incidents"         element={<Incidents />} />
             <Route path="/analytics"         element={<Analytics />} />
-            <Route path="/settings"          element={<Settings />} />
             <Route path="*" element={
               <div className="page">
                 <div className="empty-state">
