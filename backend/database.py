@@ -69,7 +69,10 @@ async def _ensure_indexes(db) -> None:
     await db.incidents.create_index(
         [("monitor_id", ASCENDING), ("status", ASCENDING), ("started_at", DESCENDING)]
     )
-    # monitors: unique numeric id
+    # monitors: unique numeric id + user scoping
     await db.monitors.create_index([("id", ASCENDING)], unique=True)
+    await db.monitors.create_index([("user_id", ASCENDING)])
+    # users: unique email + _id_str for JWT lookups
+    await db.users.create_index([("email", ASCENDING)], unique=True, sparse=True)
+    await db.users.create_index([("_id_str", ASCENDING)], unique=True)
     logger.info("MongoDB indexes ensured")
-

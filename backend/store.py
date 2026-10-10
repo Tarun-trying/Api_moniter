@@ -10,6 +10,7 @@ Collections
 monitors  — one doc per monitor (config + cached last-status fields)
 checks    — individual check result records
 incidents — incident records
+users     — registered users
 """
 import logging
 from datetime import datetime
@@ -53,6 +54,7 @@ async def make_monitor(
     timeout: int = 10,
     expected_status: Optional[int] = 200,
     expected_content: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> dict:
     db = get_db()
     now = datetime.utcnow()
@@ -68,6 +70,7 @@ async def make_monitor(
 
     m = {
         "id": mid,
+        "user_id": user_id,
         "name": name,
         "url": url,
         "method": method,
@@ -89,9 +92,12 @@ async def make_monitor(
     return m
 
 
-async def get_monitor(monitor_id: int) -> Optional[dict]:
+async def get_monitor(monitor_id: int, user_id: Optional[str] = None) -> Optional[dict]:
     db = get_db()
-    doc = await db.monitors.find_one({"id": monitor_id})
+    query = {"id": monitor_id}
+    if user_id is not None:
+        query["user_id"] = user_id
+    doc = await db.monitors.find_one(query)
     return _serialize(doc)
 
 
@@ -102,10 +108,13 @@ async def update_monitor_cache(monitor_id: int, **kwargs) -> None:
     await db.monitors.update_one({"id": monitor_id}, {"$set": kwargs})
 
 
-async def list_monitors_sorted() -> list[dict]:
-    """Return all monitors ordered by created_at descending."""
+async def list_monitors_sorted(user_id: Optional[str] = None) -> list[dict]:
+    """Return all monitors ordered by created_at descending, optionally scoped to a user."""
     db = get_db()
-    cursor = db.monitors.find({}).sort("created_at", -1)
+    query = {}
+    if user_id is not None:
+        query["user_id"] = user_id
+    cursor = db.monitors.find(query).sort("created_at", -1)
     return [_serialize(doc) async for doc in cursor]
 
 
@@ -178,10 +187,19 @@ async def get_checks_since(monitor_id: int, since: datetime) -> list[dict]:
     return [_serialize(doc) async for doc in cursor]
 
 
-async def get_all_checks_since(since: datetime) -> list[dict]:
-    """Return all checks across all monitors since `since`."""
+async def get_all_checks_since(since: datetime, user_id: Optional[str] = None) -> list[dict]:
+    """Return all checks across all (user-scoped) monitors since `since`."""
     db = get_db()
-    cursor = db.checks.find({"checked_at": {"$gte": since}})
+    if user_id is not None:
+        # Get monitor IDs for this user first
+        monitor_ids = [
+            m["id"] async for m in db.monitors.find({"user_id": user_id}, {"id": 1})
+        ]
+        cursor = db.checks.find(
+            {"monitor_id": {"$in": monitor_ids}, "checked_at": {"$gte": since}}
+        )
+    else:
+        cursor = db.checks.find({"checked_at": {"$gte": since}})
     return [_serialize(doc) async for doc in cursor]
 
 
@@ -243,10 +261,18 @@ async def resolve_incident(incident_id: int) -> None:
 
 
 async def list_incidents(
-    status_filter: Optional[str] = None, limit: int = 50
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    user_id: Optional[str] = None,
 ) -> list[dict]:
     db = get_db()
-    query = {}
+    if user_id is not None:
+        monitor_ids = [
+            m["id"] async for m in db.monitors.find({"user_id": user_id}, {"id": 1})
+        ]
+        query = {"monitor_id": {"$in": monitor_ids}}
+    else:
+        query = {}
     if status_filter:
         query["status"] = status_filter
     cursor = db.incidents.find(query).sort("started_at", -1).limit(limit)
@@ -263,7 +289,17 @@ async def get_incidents_for(monitor_id: int, limit: int = 20) -> list[dict]:
     return [_serialize(doc) async for doc in cursor]
 
 
-async def get_all_incidents_since(since: datetime) -> list[dict]:
+async def get_all_incidents_since(
+    since: datetime, user_id: Optional[str] = None
+) -> list[dict]:
     db = get_db()
-    cursor = db.incidents.find({"started_at": {"$gte": since}})
+    if user_id is not None:
+        monitor_ids = [
+            m["id"] async for m in db.monitors.find({"user_id": user_id}, {"id": 1})
+        ]
+        cursor = db.incidents.find(
+            {"monitor_id": {"$in": monitor_ids}, "started_at": {"$gte": since}}
+        )
+    else:
+        cursor = db.incidents.find({"started_at": {"$gte": since}})
     return [_serialize(doc) async for doc in cursor]

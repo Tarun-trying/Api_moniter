@@ -1,16 +1,18 @@
 """
 Monitor CRUD endpoints + manual trigger (MongoDB version).
+All routes require authentication — monitors are user-scoped.
 """
 import asyncio
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 
 import store
 from schemas.monitor import MonitorCreate, MonitorUpdate, MonitorResponse
 from services.checker import validate_url
 from services.monitor_service import execute_check
 import scheduler as sched
+from auth import get_current_user
 
 router = APIRouter(prefix="/api/monitors", tags=["monitors"])
 
@@ -21,12 +23,15 @@ def _to_response(m: dict) -> dict:
 
 
 @router.get("", response_model=List[MonitorResponse])
-async def list_monitors():
-    return await store.list_monitors_sorted()
+async def list_monitors(current_user: dict = Depends(get_current_user)):
+    return await store.list_monitors_sorted(user_id=current_user["_id_str"])
 
 
 @router.post("", response_model=MonitorResponse, status_code=status.HTTP_201_CREATED)
-async def create_monitor(payload: MonitorCreate):
+async def create_monitor(
+    payload: MonitorCreate,
+    current_user: dict = Depends(get_current_user),
+):
     # Validate URL (SSRF protection)
     ssrf_error = validate_url(payload.url)
     if ssrf_error:
@@ -40,6 +45,7 @@ async def create_monitor(payload: MonitorCreate):
         timeout=payload.timeout,
         expected_status=payload.expected_status,
         expected_content=payload.expected_content,
+        user_id=current_user["_id_str"],
     )
 
     # Schedule immediately
@@ -49,16 +55,23 @@ async def create_monitor(payload: MonitorCreate):
 
 
 @router.get("/{monitor_id}", response_model=MonitorResponse)
-async def get_monitor(monitor_id: int):
-    monitor = await store.get_monitor(monitor_id)
+async def get_monitor(
+    monitor_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    monitor = await store.get_monitor(monitor_id, user_id=current_user["_id_str"])
     if not monitor:
         raise HTTPException(status_code=404, detail="Monitor not found")
     return monitor
 
 
 @router.put("/{monitor_id}", response_model=MonitorResponse)
-async def update_monitor(monitor_id: int, payload: MonitorUpdate):
-    monitor = await store.get_monitor(monitor_id)
+async def update_monitor(
+    monitor_id: int,
+    payload: MonitorUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    monitor = await store.get_monitor(monitor_id, user_id=current_user["_id_str"])
     if not monitor:
         raise HTTPException(status_code=404, detail="Monitor not found")
 
@@ -90,7 +103,7 @@ async def update_monitor(monitor_id: int, payload: MonitorUpdate):
         updates["interval"] = payload.interval
 
     await store.update_monitor_cache(monitor_id, **updates)
-    monitor = await store.get_monitor(monitor_id)
+    monitor = await store.get_monitor(monitor_id, user_id=current_user["_id_str"])
 
     # Reschedule if interval changed
     if interval_changed:
@@ -105,8 +118,11 @@ async def update_monitor(monitor_id: int, payload: MonitorUpdate):
 
 
 @router.delete("/{monitor_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_monitor(monitor_id: int):
-    if not await store.get_monitor(monitor_id):
+async def delete_monitor(
+    monitor_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    if not await store.get_monitor(monitor_id, user_id=current_user["_id_str"]):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
     sched.remove_monitor_job(monitor_id)
@@ -114,9 +130,12 @@ async def delete_monitor(monitor_id: int):
 
 
 @router.post("/{monitor_id}/check")
-async def trigger_check(monitor_id: int):
+async def trigger_check(
+    monitor_id: int,
+    current_user: dict = Depends(get_current_user),
+):
     """Manually trigger an immediate check and wait for the result."""
-    if not await store.get_monitor(monitor_id):
+    if not await store.get_monitor(monitor_id, user_id=current_user["_id_str"]):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
     result = await execute_check(monitor_id)

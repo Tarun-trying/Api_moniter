@@ -1,19 +1,26 @@
 /**
  * Centralized API client for API Monitoring System.
- * All fetch calls go through here — no scattered fetch() across components.
+ * Auto-attaches Authorization header from localStorage JWT.
  */
 
-// In production, API_URL points to the deployed backend (e.g. https://api.myapp.com).
-// In development, Vite's proxy forwards /api → http://localhost:8000.
-const BASE = import.meta.env.API_URL
-  ? `${import.meta.env.API_URL}/api`
-  : '/api';
+const rawApiUrl = import.meta.env.VITE_API_URL || import.meta.env.API_URL;
+const BASE = rawApiUrl ? `${rawApiUrl.replace(/\/$/, '')}/api` : '/api';
 
+function getToken() {
+  return localStorage.getItem('pm_token');
+}
 
 async function request(path, options = {}) {
+  const token = getToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options.headers,
+  };
+
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options,
+    headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
@@ -23,6 +30,15 @@ async function request(path, options = {}) {
       const json = await res.json();
       detail = json.detail || detail;
     } catch (_) {}
+
+    if (res.status === 401 && !path.startsWith('/auth/login') && !path.startsWith('/auth/register')) {
+      localStorage.removeItem('pm_token');
+      localStorage.removeItem('pm_user');
+      if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
+        window.location.href = '/login';
+      }
+    }
+
     const err = new Error(detail);
     err.status = res.status;
     throw err;
@@ -31,6 +47,15 @@ async function request(path, options = {}) {
   if (res.status === 204) return null;
   return res.json();
 }
+
+// ── Auth ──────────────────────────────────────────────────────────────────
+export const auth = {
+  register: (data) => request('/auth/register', { method: 'POST', body: data }),
+  login:    (data) => request('/auth/login',    { method: 'POST', body: data }),
+  me:       ()     => request('/auth/me'),
+  logout:   ()     => request('/auth/logout',   { method: 'POST' }),
+  googleUrl: () => `${BASE}/auth/google`,
+};
 
 // ── Monitors ──────────────────────────────────────────────────────────────
 export const monitors = {

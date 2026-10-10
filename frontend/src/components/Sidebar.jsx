@@ -1,4 +1,5 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 const navItems = [
   {
@@ -47,7 +48,25 @@ const navItems = [
   },
 ];
 
+/** Returns initials from name, up to 2 characters */
+function getInitials(name = '') {
+  return name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join('');
+}
+
 export default function Sidebar() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
+
   return (
     <nav className="sidebar" aria-label="Main navigation">
       {/* Logo */}
@@ -57,7 +76,7 @@ export default function Sidebar() {
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
           </svg>
         </div>
-        <span className="sidebar-logo-text">API Monitoring System</span>
+        <span className="sidebar-logo-text">PulseMonitor</span>
       </div>
 
       {/* Nav */}
@@ -75,12 +94,35 @@ export default function Sidebar() {
         ))}
       </div>
 
-      {/* Footer */}
-      <div className="sidebar-footer">
-        <div className="sidebar-footer-text">
-          API Monitoring<br />
-          <span style={{ opacity: 0.6 }}>v1.0</span>
+      {/* User footer */}
+      <div className="sidebar-user-section">
+        <div className="sidebar-user">
+          {user?.avatar ? (
+            <img src={user.avatar} alt={user.name} className="sidebar-user-avatar" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="sidebar-user-initials" aria-hidden="true">
+              {getInitials(user?.name || user?.email || 'U')}
+            </div>
+          )}
+          <div className="sidebar-user-info">
+            <div className="sidebar-user-name">{user?.name || 'User'}</div>
+            <div className="sidebar-user-email">{user?.email}</div>
+          </div>
         </div>
+
+        <button
+          id="sidebar-logout-btn"
+          className="sidebar-logout-btn"
+          onClick={handleLogout}
+          title="Sign out"
+          aria-label="Sign out"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+        </button>
       </div>
     </nav>
   );

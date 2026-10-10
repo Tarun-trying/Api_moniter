@@ -1,11 +1,12 @@
 """
-Analytics aggregate endpoint (MongoDB version).
+Analytics aggregate endpoint (MongoDB version). Auth required.
 """
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Depends
 
 import store
+from auth import get_current_user
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -13,10 +14,12 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 @router.get("")
 async def get_analytics(
     hours: int = Query(default=24, ge=1, le=720),
+    current_user: dict = Depends(get_current_user),
 ):
+    user_id = current_user["_id_str"]
     since = datetime.utcnow() - timedelta(hours=hours)
 
-    all_checks = await store.get_all_checks_since(since)
+    all_checks = await store.get_all_checks_since(since, user_id=user_id)
 
     total_checks = len(all_checks)
     total_failures = sum(1 for c in all_checks if not c["success"])
@@ -41,12 +44,12 @@ async def get_analytics(
         p95_response_time = round(rt_values[p95_idx], 2)
 
     # Incidents
-    all_incidents = await store.get_all_incidents_since(since)
+    all_incidents = await store.get_all_incidents_since(since, user_id=user_id)
     total_incidents = len(all_incidents)
 
     # Per-monitor uptime for bar chart
     monitor_uptime = []
-    for m in await store.list_monitors_sorted():
+    for m in await store.list_monitors_sorted(user_id=user_id):
         if not m["is_active"]:
             continue
         mon_checks = [c for c in all_checks if c["monitor_id"] == m["id"]]

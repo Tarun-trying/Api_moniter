@@ -1,14 +1,15 @@
 """
-Check history endpoints (MongoDB version).
+Check history endpoints (MongoDB version). Auth required.
 """
 from datetime import datetime, timedelta
 from typing import List
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 
 import store
 from schemas.check import CheckResponse
 from services.monitor_service import compute_uptime, compute_uptime_segments
+from auth import get_current_user
 
 router = APIRouter(prefix="/api/monitors", tags=["checks"])
 
@@ -17,16 +18,20 @@ router = APIRouter(prefix="/api/monitors", tags=["checks"])
 async def list_checks(
     monitor_id: int,
     limit: int = Query(default=50, ge=1, le=500),
+    current_user: dict = Depends(get_current_user),
 ):
-    if not await store.get_monitor(monitor_id):
+    if not await store.get_monitor(monitor_id, user_id=current_user["_id_str"]):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
     return await store.get_checks_for(monitor_id, limit=limit)
 
 
 @router.get("/{monitor_id}/uptime")
-async def get_uptime(monitor_id: int):
-    if not await store.get_monitor(monitor_id):
+async def get_uptime(
+    monitor_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    if not await store.get_monitor(monitor_id, user_id=current_user["_id_str"]):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
     return {
@@ -40,8 +45,9 @@ async def get_uptime(monitor_id: int):
 async def get_uptime_segments(
     monitor_id: int,
     hours: int = Query(default=24, ge=1, le=720),
+    current_user: dict = Depends(get_current_user),
 ):
-    if not await store.get_monitor(monitor_id):
+    if not await store.get_monitor(monitor_id, user_id=current_user["_id_str"]):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
     return await compute_uptime_segments(monitor_id, hours=hours)
@@ -51,9 +57,10 @@ async def get_uptime_segments(
 async def get_chart_data(
     monitor_id: int,
     hours: int = Query(default=24, ge=1, le=720),
+    current_user: dict = Depends(get_current_user),
 ):
     """Returns response-time data points for charting."""
-    if not await store.get_monitor(monitor_id):
+    if not await store.get_monitor(monitor_id, user_id=current_user["_id_str"]):
         raise HTTPException(status_code=404, detail="Monitor not found")
 
     since = datetime.utcnow() - timedelta(hours=hours)

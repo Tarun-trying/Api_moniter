@@ -37,6 +37,8 @@ htmlcov/
 .env
 .env.*
 !.env.example
+*auth*creds*.json
+*client_secret*.json
 
 # ────────────────────────────────────────────────────────────
 # Node / Frontend

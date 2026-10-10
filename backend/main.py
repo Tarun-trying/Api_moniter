@@ -18,6 +18,7 @@ from api.monitors import router as monitors_router
 from api.checks import router as checks_router
 from api.incidents import router as incidents_router
 from api.analytics import router as analytics_router
+from api.auth import router as auth_router
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +76,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
+app.include_router(auth_router)
 app.include_router(monitors_router)
 app.include_router(checks_router)
 app.include_router(incidents_router)
